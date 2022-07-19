@@ -1,136 +1,141 @@
-import { Component } from 'react';
-import { Watch } from 'react-loader-spinner';
-import { ServiceAPI } from './API';
-import { ImageGallery } from './ImageGallery';
-import s from './ImageGallery/ImageGallery.module.css';
-import { Searchbar } from './Searchbar';
-import { Button } from './Button';
-import { Modal } from './Modal';
+import React, { Component } from 'react';
+import Searchbar from './Searchbar';
+import ImageGallery from 'components/ImageGallery/';
+import Button from './Button';
+import Loader from './Loader';
+import Modal from './Modal';
+import api from '../services/image-search-api';
+
+const Status = {
+  IDLE: 'idle',
+  PENDING: 'pending',
+  RESOLVED: 'resolved',
+  REJECTED: 'rejected',
+};
 
 export class App extends Component {
   state = {
     query: '',
-    data: [],
-    page: 1,
+    images: [],
     error: null,
-    status: 'idle',
+    status: Status.IDLE,
+    page: 1,
+    totalImages: null,
+    modalImageURL: null,
     showModal: false,
-    imgId: null,
-    total: 0,
   };
 
   componentDidUpdate(prevProps, prevState) {
-    if (this.state.query !== prevState.query) {
-      this.setState({ status: 'pending', data: [], page: 1 }, this.getPicture);
+    const prevQuery = prevState.query;
+    const nextQuery = this.state.query;
+
+    const prevPage = prevState.page;
+    const nextPage = this.state.page;
+
+    if (prevQuery !== nextQuery) {
+      this.setState({
+        status: Status.PENDING,
+      });
+
+      api
+        .fetchImages(nextQuery, nextPage)
+        .then(images => {
+          if (!images.totalHits) {
+            return Promise.reject(
+              new Error(`Nothing found for the word: ${nextQuery}.`)
+            );
+          }
+
+          return images;
+        })
+        .then(images =>
+          this.setState({
+            status: Status.RESOLVED,
+            images: images.hits,
+            totalImages: images.totalHits,
+          })
+        )
+        .catch(error => this.setState({ error, status: Status.REJECTED }));
     }
-    if (this.state.page !== prevState.page && this.state.page !== 1) {
-      this.setState({ status: 'pending' }, this.getPicture);
+
+    if (prevPage !== nextPage && nextPage !== 1) {
+      this.setState({ status: Status.PENDING });
+
+      api
+        .fetchImages(nextQuery, nextPage)
+        .then(images => {
+          this.setState({
+            status: Status.RESOLVED,
+          });
+          return this.addImages(images);
+        })
+        .catch(error => this.setState({ error, status: Status.REJECTED }));
     }
   }
 
-  getPicture = () => {
-    const { query } = this.state;
-    const { page } = this.state;
-    ServiceAPI(query, page)
-      .then(this.dataProcessing)
-      .catch(error => this.setState({ error, status: 'rejected' }));
-  };
+  handleImageClick = ImageURL => {
+    this.setState({ modalImageURL: ImageURL });
 
-  dataProcessing = response => {
-    const { hits: dataArray, totalHits } = response.data;
-
-    if (!dataArray.length) {
-      this.setState({
-        status: 'rejected',
-        error: new Error('Try to change the request'),
-      });
-      return;
-    }
-    window.scrollBy({
-      top: document.body.clientHeight,
-      behavior: 'smooth',
-    });
-
-    const newData = dataArray.map(data => {
-      const {
-        id,
-        largeImageURL: imageURL,
-        webformatURL: src,
-        tags: alt,
-      } = data;
-      return { id, imageURL, src, alt };
-    });
-    return this.setState(({ data }) => {
-      return {
-        data: [...data, ...newData],
-        total: totalHits,
-        status: 'resolved',
-      };
-    });
-  };
-
-  handleSubmit = searchQuery => {
-    if (this.state.query !== searchQuery) {
-      this.setState({ query: searchQuery });
-    }
-    return;
-  };
-
-  handleLoadMore = () => {
-    this.setState(({ page }) => {
-      return { page: page + 1 };
-    });
-  };
-
-  toggleModal = () => {
-    this.setState(({ showModal }) => ({ showModal: !showModal }));
-  };
-
-  clickOnImage = id => {
-    this.setState({ imgId: id });
     this.toggleModal();
   };
 
-  handleData = () => {
-    return this.state.data.find(img => img.id === this.state.imgId);
+  addImages = images => {
+    this.setState(prevState => ({
+      images: [...prevState.images, ...images.hits],
+    }));
+  };
+
+  handleSubmit = query => {
+    this.setState({ query, images: [], totalImages: null, page: 1 });
+  };
+
+  toggleModal = () => {
+    this.setState(prevState => ({ showModal: !prevState.showModal }));
+  };
+
+  onButtonClick = () => {
+    this.setState(prevState => ({
+      page: prevState.page + 1,
+    }));
   };
 
   render() {
-    const { status, error, data, showModal, total } = this.state;
+    const { status, error, images, totalImages, showModal, modalImageURL } =
+      this.state;
+    const totalAddImages = images.length;
 
     return (
-      <div className="App">
-        <Searchbar onSubmit={this.handleSubmit} />
-        {data.length > 0 && (
-          <ImageGallery data={this.state.data} onClick={this.clickOnImage} />
+      <div>
+        {showModal && (
+          <Modal modalImageURL={modalImageURL} onClose={this.toggleModal} />
         )}
-        {status === 'resolved' && data.length > 0 && data.length < total && (
+
+        <Searchbar onSubmit={this.handleSubmit} />
+
+        {status === Status.PENDING && (
           <>
-            <Button onClick={this.handleLoadMore} />
+            {images && (
+              <ImageGallery
+                images={images}
+                handleImageClick={this.handleImageClick}
+              />
+            )}
+            <Loader />
           </>
         )}
 
-        {status === 'pending' && (
-          <div className={s.Watch}>
-            <Watch
-              color="#00BFFF"
-              height={200}
-              width={200}
-              ariaLabel="loading"
+        {status === Status.REJECTED && <h2>{error.message}</h2>}
+
+        {status === Status.RESOLVED && (
+          <>
+            <ImageGallery
+              images={images}
+              handleImageClick={this.handleImageClick}
             />
-          </div>
-        )}
-
-        {status === 'rejected' && (
-          <div className={s.ImageGallery}>
-            <p>{`Something went wrong! ${error}`}</p>
-          </div>
-        )}
-
-        {showModal && (
-          <Modal onClose={this.toggleModal}>
-            <img src={this.handleData().imageURL} alt={this.handleData().alt} />
-          </Modal>
+            {totalAddImages < totalImages ? (
+              <Button onClick={this.onButtonClick} />
+            ) : null}
+          </>
         )}
       </div>
     );
